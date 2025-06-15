@@ -1,0 +1,18 @@
+[package]
+name = "assembly-theory"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quick-xml = "0.37.2"
+egui = {path="deps/egui/crates/egui"}
+eframe = {path="deps/egui/crates/eframe"}
+egui_glow = {path="deps/egui/crates/egui_glow"}
+egui_extras = {version = "*", features = ["all_loaders"], path="deps/egui/crates/egui_extras"}
+image = { version = "0.25", features = ["jpeg", "png"] }
+rfd = "0.15.3"
+bincode = "2.0.1"
+env_logger = "0.11.6"
+chrono = "0.4"
+nalgebra = "0.33.2"
+qhull = "0.4.0"
