@@ -26,6 +26,8 @@
   <!-- vertex="0 0 0  10 0 0  0 10 0" -->
 
   <asset>
+    <texture rgb1="0 0 0" gridsize="3 4" gridlayout=".....B......" file="red.png"/>
+    <material name="red" texture="red"/>
     <mesh name="cubelet" 
           scale="4e-2 4e-2 4e-2"
           vertex="8.075   9.5    -8.075  -8.075   9.5    -8.075   8.075   9.5     8.075
@@ -51,15 +53,16 @@
 
   <default class="cubelet">
       <!-- <joint type="ball" armature="0.0001" damping="0.0005" frictionloss="0.001"/> -->
-      <geom type="mesh" condim="1" mesh="cubelet" euler="0 0 0"/>
+      <geom type="mesh" material="red" condim="1" mesh="cubelet" euler="0 0 0"/>
     </default>
 
    <worldbody>
-    <body name="core" childclass="cubelet">
+    <!-- <body name="core" childclass="cubelet"> -->
       <!-- <geom/> -->
-    <!-- <body name="core"> -->
-      <!-- <geom type="box" size="0.75 0.8 0.5" pos="0.0 0.0 0.0" euler="0 0 0"/> -->
-      <geom type="sphere" size="0.75" pos="0.0 0.0 0.0" euler="0 0 0"/>
+    <body name="core">
+      <geom type="box" material="red" size="0.5 0.5 0.5" pos="0.0 0.0 0.0" euler="0 0 0"/>
+      <!-- <geom/> -->
+      <!-- <geom type="sphere" size="0.75" pos="0.3 0.20 0.0" euler="90 0 0"/> -->
     </body>
   </worldbody>
 
