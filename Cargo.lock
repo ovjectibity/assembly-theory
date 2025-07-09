@@ -347,6 +347,7 @@ dependencies = [
  "egui_glow",
  "env_logger",
  "image",
+ "libc",
  "nalgebra",
  "qhull",
  "quick-xml 0.37.4",

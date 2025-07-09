@@ -17,6 +17,7 @@ use crate::node::Joint;
 use crate::node::Texture;
 use crate::node::Material;
 use std::collections::HashMap;
+use crate::physics_mj::mjModel;
 
 #[derive(Clone)]
 pub enum FileType {
@@ -56,7 +57,7 @@ impl Model {
         let contents = fs::read_to_string(file).unwrap();
         let mut reader = Reader::from_str(contents.as_str());
         let mut buf = Vec::new();
-        let mut wbody: Option<Rc<RefCell<Node>>> = None; 
+        let mut wbody: Option<Rc<RefCell<Node>>> = None;
         let mut defaults: Option<Rc<RefCell<Node>>> = None;
         let mut assets: Option<Rc<RefCell<Node>>> = None;
         let mut p_stack: Vec<Rc<RefCell<Node>>> = Vec::new();
@@ -332,5 +333,9 @@ impl Model {
             asset_manager: assets,
             asset_files: image_files_map
         }
+    }
+
+    pub fn initialise_mjmodel(&self) -> mjModel {
+        mjModel {}
     }
 }

@@ -9,12 +9,19 @@ use crate::node::Node;
 use crate::model::Model;
 use crate::painter::PaintsMan;
 use crate::drawable::{MeshCollection};
+use crate::plugin::{PluginCapabilities, PluginManager};
+use crate::rubiks::{RubiksCube};
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 pub mod drawable;
 pub mod node;
 pub mod model;
 pub mod painter;
+pub mod physics_mj;
+pub mod rubiks;
+pub mod plugin;
 
 const TOOLBAR_POINTER: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/blender_icon_restrict_select_on.svg";
 const COLLAPSE: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/blender_icon_area_join_down.svg";
@@ -22,7 +29,7 @@ const ZOOM: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/bl
 const EXPAND: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/blender_icon_area_join_up.svg";
 const LEFT_COLLAPSE: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/blender_icon_area_join_left.svg";
 const EXPAND_RIGHT: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/blender_icon_area_join.svg";
-
+const CUBE_FILE: &str = "/Users/avi/Documents/manual/assembly-theory/assets/model-2.xml";
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
@@ -82,7 +89,8 @@ struct AssemblyTheory {
     view_prop: Arc<Mutex<ViewProp>>,
     logger: Logger,
     file_assets: HashMap<String,(u32,u32,Vec<u8>)>,
-    current_tool: Tool
+    current_tool: Tool,
+    plugins_manager: PluginManager
 }
 
 impl AssemblyTheory {
@@ -101,10 +109,25 @@ impl AssemblyTheory {
             model: None,
             logger: Logger{logs: Vec::new()},
             file_assets: HashMap::new(),
-            current_tool: Tool::None
+            current_tool: Tool::None,
+            plugins_manager: PluginManager::new()
         };
         Self::initialize_gl_context(&cc);
-        inst.logger.add_log("No model loaded.");
+        // inst.logger.add_log("No model loaded.");
+
+        inst.model = Some(Model::load_model(std::path::PathBuf::from(CUBE_FILE)));
+        if let Some(m) = &mut inst.model {
+            if let Some(wb) = &m.world_body {
+                inst.plugins_manager.register_plugin(
+                    Rc::new(RefCell::new(RubiksCube::new())),
+                    PluginCapabilities::default());
+                inst.plugins_manager.process_model_load(wb.clone());
+            }
+        }
+        inst.view_prop.lock().expect("Expected view prop lock to be available").
+            model_updated = true;
+        inst.view_prop.lock().expect("Expected view prop lock to be available").
+            model_loaded = true;
         inst
     }
 

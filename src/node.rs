@@ -1621,7 +1621,8 @@ pub struct Body {
     pos: (f32,f32,f32),
     orientation: Orientation,
     attrs_map: HashMap<String,String>,
-    scale: (f32,f32,f32)
+    scale: (f32,f32,f32),
+    added_rotations: Vec<Orientation>
 }
 
 impl Body { 
@@ -1635,12 +1636,13 @@ impl Body {
             scale: (1.0,1.0,1.0),
             parent: Weak::new(),
             orientation: Orientation::Euler(Euler{x:0.0,y:0.0,z:0.0}),
-            attrs_map: HashMap::new()
+            attrs_map: HashMap::new(),
+            added_rotations: Vec::new()
         }
     }
 
-    fn get_rotation_params(&self) -> (f32,f32,f32) {
-        if let Orientation::Euler(e) = &self.orientation {
+    fn get_rotation_params(orientation: &Orientation) -> (f32,f32,f32) {
+        if let Orientation::Euler(e) = &orientation {
             (e.x * (std::f64::consts::PI / 180.0) as f32,
             e.y * (std::f64::consts::PI / 180.0) as f32,
             e.z * (std::f64::consts::PI / 180.0) as f32)
@@ -1650,9 +1652,45 @@ impl Body {
         }
     }
 
+    pub fn apply_added_rotations(&mut self,rotation_params: (f32,f32,f32)) {
+        self.added_rotations.push(Orientation::Euler(
+            Euler{
+                x: rotation_params.0,
+                y: rotation_params.1,
+                z: rotation_params.2
+            }
+        ));
+    }
+
     fn apply_transforms(&self,vertices: Vec<f32>) -> Vec<f32> {
         let num_vertices = vertices.len() / 3;
-        let rotation_params = self.get_rotation_params();
+        let mut added_rotation_m = Matrix3::new(
+                    1.0,0.0,0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0
+            );
+        for added_r in &self.added_rotations {
+            let rotation_params = Self::get_rotation_params(added_r);
+            let applied_m = Matrix3::new(
+                    rotation_params.1.cos() * rotation_params.2.cos(), 
+                    rotation_params.1.cos() * rotation_params.2.sin(), 
+                    -rotation_params.1.sin(), 
+
+                    rotation_params.0.sin() * rotation_params.1.sin() * rotation_params.2.cos() - 
+                    rotation_params.0.cos() * rotation_params.2.sin(), 
+                    rotation_params.0.sin() * rotation_params.1.sin() * rotation_params.2.sin() + 
+                    rotation_params.0.cos() * rotation_params.2.cos(), 
+                    rotation_params.0.sin() * rotation_params.1.cos(), 
+
+                    rotation_params.0.cos() * rotation_params.1.sin() * rotation_params.2.cos() + 
+                    rotation_params.0.sin() * rotation_params.2.sin(),
+                    rotation_params.0.cos() * rotation_params.1.sin() * rotation_params.2.sin() - 
+                    rotation_params.0.sin() * rotation_params.2.cos(),
+                    rotation_params.0.cos() * rotation_params.1.cos()
+            );
+            added_rotation_m = applied_m * added_rotation_m;
+        }
+        let rotation_params = Self::get_rotation_params(&self.orientation);
         let rotation_m = Matrix3::new(
                 rotation_params.1.cos() * rotation_params.2.cos(), 
                 rotation_params.1.cos() * rotation_params.2.sin(), 
@@ -1670,13 +1708,13 @@ impl Body {
                 rotation_params.0.sin() * rotation_params.2.cos(),
                 rotation_params.0.cos() * rotation_params.1.cos()
         );
-        let rotation_s = Matrix3::new(
+        let scale_m = Matrix3::new(
                 self.scale.0, 0.0, 0.0,
                 0.0, self.scale.1, 0.0,
                 0.0, 0.0, self.scale.2,
         );
         let vertices_m = DMatrix::from_vec(3,num_vertices,vertices);
-        let mut vertices_mr = rotation_m * rotation_s * vertices_m;
+        let mut vertices_mr = added_rotation_m * rotation_m * scale_m * vertices_m;
         let mut translation = Vec::new();
         for _i in 0..num_vertices {
             translation.push(self.pos.0);

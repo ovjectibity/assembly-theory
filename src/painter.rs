@@ -113,7 +113,7 @@ impl PaintsMan {
                     uniform mat3 viewport_transform;
                     uniform vec4 viewport_translate;
                     void main() {
-                        v_color = vec4(color,1);
+                        v_color = vec4(color,0.75);
                         tex_coord = tex_coord_r;
                         gl_Position = viewport_translate + 
                             (projection * vec4(viewport_transform * verts, 1.0));
