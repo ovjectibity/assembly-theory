@@ -88,9 +88,10 @@ impl PaintsMan {
         hasher.finish()
     }
 
-    pub fn refresh_draw(&mut self, gl: &glow::Context, 
+    pub fn refresh_draw(&mut self, 
+            gl: &glow::Context, 
             meshes: MeshCollection,
-            textures_data: Vec<Texture>) -> &Self {
+            textures_data: Option<Vec<Texture>>) -> &Self {
         self.destroy(gl);
         use glow::HasContext as _;
 
@@ -222,7 +223,23 @@ impl PaintsMan {
                         glow::FLOAT, false, 9*f32_size, 6*f32_size);
             gl.enable_vertex_attrib_array(2);
             gl.bind_vertex_array(None);
-            
+
+            // println!("Got this textures map {:?}",textures_ids_map);
+            self.program = Some(program);
+            self.vertex_array = Some(vertex_array);
+            if let Some(tex) = textures_data {
+                self.texture_ids_map = Some(Self::load_textures(gl, tex));
+            }
+            self.draw_map = Some(meshes.get_draw_map());
+        }
+        self
+    }
+
+    fn load_textures(
+            gl: &glow::Context, 
+            textures_data: Vec<Texture>) -> HashMap<String,glow::NativeTexture> {
+        use glow::HasContext as _;
+        unsafe {
             //Set texture data
             let mut textures_ids_map: HashMap<String,glow::NativeTexture> = HashMap::new();
             for texture in textures_data {
@@ -272,14 +289,8 @@ impl PaintsMan {
                 }
                 gl.bind_texture(glow::TEXTURE_CUBE_MAP, None);
             }
-
-            println!("Got this textures map {:?}",textures_ids_map);
-            self.program = Some(program);
-            self.vertex_array = Some(vertex_array);
-            self.texture_ids_map = Some(textures_ids_map);
-            self.draw_map = Some(meshes.get_draw_map());
+            textures_ids_map
         }
-        self
     }
 
     pub fn paint(&self,view_props: Arc<Mutex<ViewProp>>, gl: &glow::Context) {

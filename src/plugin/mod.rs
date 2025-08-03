@@ -1,6 +1,12 @@
 use crate::node::Node;
 use std::rc::{Rc};
 use std::cell::RefCell;
+use std::time::{Duration};
+use crate::ViewProp;
+use std::sync::{Arc,Mutex};
+
+pub mod rubiks;
+pub mod rubiks_solver;
 
 pub struct PluginCapabilities {
     pub process_model_load: bool,
@@ -19,7 +25,7 @@ impl PluginCapabilities {
 }
 
 pub trait Plugin {
-    fn process_sim_loop(&mut self,worldbody: Rc<RefCell<Node>>);
+    fn process_sim_loop(&mut self, t: Duration, worldbody: Rc<RefCell<Node>>);
     fn process_model_load(&mut self,worldbody: Rc<RefCell<Node>>);
 }
 
@@ -38,10 +44,13 @@ impl PluginManager {
         self.registered_plugins.push((cap,plugin));
     }
 
-    pub fn process_sim_loop(&self,worldbody: Rc<RefCell<Node>>) {
+    pub fn process_sim_loop(&self, view_prop: Arc<Mutex<ViewProp>>, t: Duration, worldbody: Rc<RefCell<Node>>) {
         for plugin in &self.registered_plugins {
             if plugin.0.process_sim_loop {
-                plugin.1.borrow_mut().process_sim_loop(worldbody.clone());
+                plugin.1.borrow_mut().process_sim_loop(t.clone(), worldbody.clone());
+                //TODO: This should be further passed down to the plugin to 
+                //exactly determine whether any update has been made
+                view_prop.lock().unwrap().model_updated = true;
             }
         }
     }

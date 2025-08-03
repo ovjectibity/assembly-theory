@@ -3,24 +3,23 @@ use eframe::glow::HasContext;
 use eframe::glow::{self};
 use std::sync::{Arc,Mutex};
 use rfd::FileDialog;
-use std::time::SystemTime;
 use chrono::{DateTime, Utc};
 use crate::node::Node;
 use crate::model::Model;
 use crate::painter::PaintsMan;
 use crate::drawable::{MeshCollection};
+use crate::plugin::rubiks::RubiksCubeModelInterface;
 use crate::plugin::{PluginCapabilities, PluginManager};
-use crate::rubiks::{RubiksCube};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::time::{SystemTime};
 
 pub mod drawable;
 pub mod node;
 pub mod model;
 pub mod painter;
 pub mod physics_mj;
-pub mod rubiks;
 pub mod plugin;
 
 const TOOLBAR_POINTER: &str = "file:///Users/avi/Documents/manual/assembly-theory/assets/blender_icon_restrict_select_on.svg";
@@ -80,7 +79,8 @@ pub struct ViewProp {
     collapse_debugger: bool,
     to_fill: bool,
     model_updated: bool,
-    model_loaded: bool
+    model_loaded: bool,
+    texture_loaded: bool
 }
 
 struct AssemblyTheory {
@@ -90,7 +90,8 @@ struct AssemblyTheory {
     logger: Logger,
     file_assets: HashMap<String,(u32,u32,Vec<u8>)>,
     current_tool: Tool,
-    plugins_manager: PluginManager
+    plugins_manager: PluginManager,
+    stamp: SystemTime
 }
 
 impl AssemblyTheory {
@@ -103,14 +104,16 @@ impl AssemblyTheory {
                     collapse_debugger: false, 
                     to_fill: true,
                     model_updated: false,
-                    model_loaded: false
+                    model_loaded: false,
+                    texture_loaded: false
             })),
             viewport_painter: Arc::new(Mutex::new(PaintsMan::new())),
             model: None,
             logger: Logger{logs: Vec::new()},
             file_assets: HashMap::new(),
             current_tool: Tool::None,
-            plugins_manager: PluginManager::new()
+            plugins_manager: PluginManager::new(),
+            stamp: SystemTime::now()
         };
         Self::initialize_gl_context(&cc);
         // inst.logger.add_log("No model loaded.");
@@ -119,8 +122,12 @@ impl AssemblyTheory {
         if let Some(m) = &mut inst.model {
             if let Some(wb) = &m.world_body {
                 inst.plugins_manager.register_plugin(
-                    Rc::new(RefCell::new(RubiksCube::new())),
-                    PluginCapabilities::default());
+                    Rc::new(RefCell::new(RubiksCubeModelInterface::new())),
+                    PluginCapabilities {
+                        process_model_load: true,
+                        process_sim_loop: true,
+                        load_model: false
+                    });
                 inst.plugins_manager.process_model_load(wb.clone());
             }
         }
@@ -128,6 +135,8 @@ impl AssemblyTheory {
             model_updated = true;
         inst.view_prop.lock().expect("Expected view prop lock to be available").
             model_loaded = true;
+        inst.view_prop.lock().expect("Expected view prop lock to be available").
+            texture_loaded = true;
         inst
     }
 
@@ -184,15 +193,28 @@ impl AssemblyTheory {
             },
             _ => ()
         }
+
+        //Synchronously let all the plugins process the sim loop
+        //TODO: This might need to be more closely associated with simul loop
+        if let Some(m) = &self.model {
+            if let Some(wb) = &m.world_body {
+                self.plugins_manager.process_sim_loop(
+                    self.view_prop.clone(),
+                    self.stamp.elapsed().unwrap(), 
+                    wb.clone());
+            }
+        }
         
         let viewport_painter = self.viewport_painter.clone();
 
         if self.view_prop.lock().expect("Failed to lock view prop").model_updated {
             let view_props = self.view_prop.clone();
             let geometries = self.extract_geometries();
-            let mut textures_data = Vec::new();
-            if let Some(model) = &self.model {
-                textures_data = model.get_textures_data(); 
+            let mut textures_data = None;
+            if self.view_prop.lock().expect("Failed to lock view prop").texture_loaded {
+                if let Some(model) = &self.model {
+                    textures_data = Some(model.get_textures_data()); 
+                }
             }
 
             if !geometries.drawable_meshes.is_empty() {
@@ -210,6 +232,7 @@ impl AssemblyTheory {
                             //TOFIX: This is horrendous. Can't I reset this flag in the same thread??
                             //Or perhaps do it at the refresh_draw end which is the source of updates
                             view_props.lock().expect("Issue locking viewprops object").model_updated = false;
+                            view_props.lock().expect("Issue locking viewprops object").texture_loaded = false;
                         }
                         painter_l.paint(view_props.clone(), painter.gl());
                     })),
@@ -248,6 +271,8 @@ impl eframe::App for AssemblyTheory {
                                 model_updated = true;
                             self.view_prop.lock().expect("Expected view prop lock to be available").
                                 model_loaded = true;
+                            self.view_prop.lock().expect("Expected view prop lock to be available").
+                                texture_loaded = true;
                         }
                         ui.close_kind(egui::UiKind::Menu);
                     }

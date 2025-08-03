@@ -2,10 +2,11 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use crate::plugin::Plugin;
-
+use std::time::{Duration};
 use crate::node::{Node, NodeType};
+use crate::plugin::rubiks_solver::RubiksSolver;
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum FaceColor {
     Red,
     Blue,
@@ -16,7 +17,7 @@ pub enum FaceColor {
 }
 
 #[derive(Clone,Debug)]
-pub enum CubeMove {
+pub enum CubeMove {  
     LPlus,
     LMinus,
     RPlus,
@@ -28,17 +29,18 @@ pub enum CubeMove {
     FPlus,
     FMinus,
     BPlus,
-    BMinus
+    BMinus,
+    NoOp
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum Cubelet {
     Center(FaceColor),
     Corner(FaceColor,FaceColor,FaceColor),
     Edge(FaceColor,FaceColor)
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum SlottedCubelet {
     Center(u32),
     Corner(CornerSlot,u32),
@@ -75,7 +77,7 @@ impl SlottedCubelet {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum EdgeSlot {
     LeftUp(u32,u32),
     LeftDown(u32,u32),
@@ -127,6 +129,24 @@ impl EdgeSlot {
                     _ => (0,0)
                 }
             }
+        }
+    }
+
+    pub fn get_raw_color_indices(&self) -> (u32,u32) {
+        match self {
+            EdgeSlot::UpBack(a,b) | 
+            EdgeSlot::UpFront(a,b) | 
+            EdgeSlot::DownBack(a,b) | 
+            EdgeSlot::DownFront(a,b) |
+            EdgeSlot::LeftUp(a,b) | 
+            EdgeSlot::LeftDown(a,b) | 
+            EdgeSlot::RightUp(a,b) | 
+            EdgeSlot::RightDown(a,b) | 
+            EdgeSlot::LeftBack(a,b) | 
+            EdgeSlot::LeftFront(a,b) | 
+            EdgeSlot::RightBack(a,b) | 
+            EdgeSlot::RightFront(a,b) 
+             => (a.clone(),b.clone()) 
         }
     }
 
@@ -187,7 +207,7 @@ impl EdgeSlot {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 pub enum CornerSlot {
     UpLeftFront(u32,u32,u32),
     UpRightFront(u32,u32,u32),
@@ -218,6 +238,20 @@ impl CornerSlot {
                     _ => (0,0,0)
                 }
             }
+        }
+    }
+
+    pub fn get_raw_color_indices(&self) -> (u32,u32,u32) {
+        match self {
+            CornerSlot::UpLeftFront(x,y,z) | 
+            CornerSlot::UpRightFront(x,y,z) |
+            CornerSlot::UpLeftBack(x,y,z) | 
+            CornerSlot::UpRightBack(x,y,z) | 
+            CornerSlot::DownLeftFront(x,y,z) | 
+            CornerSlot::DownRightFront(x,y,z) | 
+            CornerSlot::DownLeftBack(x,y,z) | 
+            CornerSlot::DownRightBack(x,y,z)
+             => (x.clone(),y.clone(),z.clone())
         }
     }
 
@@ -254,56 +288,181 @@ impl CornerSlot {
     }
 }
 
-pub struct RubiksCube {
-    body: Option<Rc<RefCell<Node>>>, //Geometric representation
-    cubelets: [Cubelet;26], //Cubelets description
-    //Logical representation, 6 centers, 12 edge slots, 8 corner slots
-    cube_slot_map: RefCell<HashMap<String,SlottedCubelet>> //([SlottedCubelet;6],[SlottedCubelet;12],[SlottedCubelet;8])
+pub struct RubiksCubeModelInterface {
+    body: Option<Rc<RefCell<Node>>>, //Geometric representation,
+    anim_counter: Option<(f32,f32)>,
+    anim_time: f32,
+    move_queue: Vec<(CubeMove,bool)>,
+    anim_active: Option<(Rc<RefCell<Node>>,Vec<u32>,(f32,f32,f32),CubeMove)>,
+    cube: RubiksCube,
+    solver: RubiksSolver
 }
 
-impl RubiksCube {
+#[derive(Clone,Debug)]
+pub struct RubiksCube {
+    pub cubelets: [Cubelet;26], //Cubelets description
+    //Logical representation, 6 centers, 12 edge slots, 8 corner slots
+    pub cube_slot_map: RefCell<HashMap<String,SlottedCubelet>>, //([SlottedCubelet;6],[SlottedCubelet;12],[SlottedCubelet;8])
+}
+
+impl RubiksCubeModelInterface {
+    pub fn new() -> Self {
+        RubiksCubeModelInterface {
+            move_queue: Vec::new(),
+            anim_active: None,
+            anim_counter: None,
+            anim_time: 2.0,
+            body: None,
+            cube: RubiksCube::new(),
+            solver: RubiksSolver::new()
+        }
+    }
+
     //Assumption: 6 center cubelets, 8 corner cublets, 12 edge cubelets,
     //Possible moves: F+, F-, B+, B-, L+, L-, R+, R-, U+, U-, D+, D-
     //Select the cubelets index & select 9 for each move 
     // Apply transforms to the body as well as apply the internal state updates
-    pub fn apply_move(&mut self, mv: CubeMove) {
-        //Work on the body which has the list of all cubelets
-        if let Some(b) = &self.body {
-            {
-                let children = b.borrow().get_children();
-                let mut target_body = None;
-                for child in children {
-                    if child.borrow().get_name() == "core" {
-                        target_body = Some(child.clone());
+    pub fn apply_move(&mut self, mv: CubeMove, animate: bool) {
+        if self.anim_active.is_none() {
+            if match &mv {
+                CubeMove::NoOp => true,
+                _ => false        
+            } {
+                return;
+            }
+            //Work on the body which has the list of all cubelets
+            if let Some(b) = &self.body {
+                {
+                    let children = b.borrow().get_children();
+                    let mut target_body = None;
+                    for child in children {
+                        if child.borrow().get_name() == "core" {
+                            target_body = Some(child.clone());
+                        }
+                    }
+                    if let Some(tb) = target_body {
+                        let a_indices: Vec<u32> = self.cube.get_indices_for_move(mv.clone());
+                        let rotation_params = RubiksCube::get_rotation_params(mv.clone());
+                        if animate {
+                            self.anim_active = Some((tb,a_indices,rotation_params,mv));
+                            //Keep applying the transforms for when advance_animation is called
+                        } else {
+                            Self::apply_geometry_transforms(
+                                tb,
+                                a_indices,
+                                rotation_params);
+                            self.cube.update_rep(mv);
+                        }
                     }
                 }
-                if let Some(tb) = target_body {
-                    let a_indices: Vec<u32> = self.get_indices_for_move(mv.clone());
-                    match *tb.borrow() {
-                        Node::Body(ref t) => {
-                            let children = t.get_children();
-                            let mut index = 0;
-                            for child in children.iter().rev() {
-                                match *child.borrow_mut() {
-                                    Node::Body(ref mut b) => {    
-                                        // println!("Applying move to body node: {}",b.get_name());
-                                        if a_indices.contains(&(index as u32)) {
-                                            b.apply_added_rotations(Self::get_rotation_params(mv.clone()));
-                                        }
-                                        index += 1;
-                                    },
-                                    _ => ()
-                                }
+            }
+        } else {
+            //Queue the move
+            self.move_queue.push((mv,true));
+        }
+    }
+
+    //t1, t2, t3, (t4 / 10)
+    fn advance_animation(&mut self, t: f32) {
+        if let Some((tb,a,b,mv)) = 
+            &self.anim_active {
+            if let Some(counter) = &mut self.anim_counter {
+                let t = t.min(self.anim_time + counter.0);
+                let inc = t - counter.1;
+                let chunk = inc / self.anim_time;
+                let u_rotation_params = 
+                    (chunk * b.0,
+                    chunk * b.1,
+                    chunk * b.2);
+                println!("Advancing animation by: {:?} {:?} {} {} {} {}",b,u_rotation_params,chunk,inc,t,counter.1);
+                //Advance animation transforms: 
+                Self::apply_geometry_transforms(
+                    tb.clone(),
+                    a.clone(),
+                    u_rotation_params);
+                counter.1 = t;
+                //Apply if the animation is over: 
+                if t == (self.anim_time + counter.0) {
+                    self.cube.update_rep(mv.clone());
+                    self.anim_counter = None;
+                    self.anim_active = None;
+                    //Setup the queue move now
+                    if !self.move_queue.is_empty() {
+                        let (mv,anim) = self.move_queue.remove(0);
+                        self.apply_move(mv.clone(), anim.clone());
+                    }
+                }
+            } else {
+                self.anim_counter = Some((t,t));
+            }
+        }
+    }
+
+    pub fn apply_geometry_transforms(
+        target_body: Rc<RefCell<Node>>,
+        indices: Vec<u32>, 
+        rotation_params: (f32,f32,f32)) {
+        match *target_body.borrow() {
+            Node::Body(ref t) => {
+                let children = t.get_children();
+                let mut index = 0;
+                for child in children.iter().rev() {
+                    match *child.borrow_mut() {
+                        Node::Body(ref mut b) => {    
+                            // println!("Applying move to body node: {}",b.get_name());
+                            if indices.contains(&(index as u32)) {
+                                b.apply_added_rotations(rotation_params);
                             }
+                            index += 1;
                         },
                         _ => ()
                     }
                 }
-            }
-            self.update_rep(mv);
+            },
+            _ => ()
         }
     }
+}
 
+impl Plugin for RubiksCubeModelInterface {
+    fn process_sim_loop(&mut self, t: Duration, worldbody: Rc<RefCell<Node>>) {
+        println!("Duration passed: {:?}", t);
+        self.advance_animation(t.as_secs_f32());
+    }
+
+    fn process_model_load(&mut self,worldbody: Rc<RefCell<Node>>) {
+        println!("Processing model load in Rubik's plugin");
+        self.body = Some(worldbody);
+        self.apply_move(CubeMove::FPlus,false);
+        self.apply_move(CubeMove::UPlus,false);
+        for i in 0..self.solver.num_epochs {
+            println!("Training {} epoch",i);
+            let trajs = 
+                self.solver.gen_trajectories(self.cube.clone());
+            //TODO: Optimise this, forward passes in both gen_traj & training
+            self.solver.train_an_epoch(trajs);
+        }
+        // Display the trajectories: 
+        let mv = self.solver.generate_move(&self.cube);
+        let rcb2 = self.cube.apply_move(mv.clone());
+        let mv2 = self.solver.generate_move(&rcb2);
+        // println!("Got the cubemove from policy: {:?}",mv);
+        self.apply_move(mv,true);
+        self.apply_move(mv2,true);
+        // self.apply_move(CubeMove::UPlus,true);
+        // self.apply_move(CubeMove::RPlus,true);
+        // self.apply_move(CubeMove::DPlus,true);
+        // self.apply_move(CubeMove::BPlus,true);
+        // self.apply_move(CubeMove::LPlus);
+        // self.apply_move(CubeMove::RPlus);
+        // self.apply_move(CubeMove::RPlus);
+        // self.apply_move(CubeMove::DPlus);
+        // self.apply_move(CubeMove::FMinus,false);
+        // self.apply_move(CubeMove::UMinus,false);
+    }
+}
+
+impl RubiksCube {
     fn get_rotation_params(mv: CubeMove) -> (f32,f32,f32) {
         match mv {
             CubeMove::LPlus => {
@@ -341,11 +500,24 @@ impl RubiksCube {
             },
             CubeMove::BMinus => {
                 (0.0,0.0,90.0)
-            }
+            },
+            _ =>  (0.0,0.0,0.0)
         }
     }
 
-    fn update_rep(&mut self,mv: CubeMove) {
+    pub fn apply_move(&self,mv: CubeMove) -> RubiksCube {
+        let mut updated_cube = self.clone();
+        updated_cube.update_rep(mv);
+        updated_cube
+    }
+
+    pub fn update_rep(&mut self,mv: CubeMove) {
+        if match &mv {
+            CubeMove::NoOp => true,
+            _ => false        
+        } {
+            return;
+        }
         let primary = match mv {
             CubeMove::LPlus | CubeMove::LMinus | CubeMove::RPlus | CubeMove::RMinus  => {             
                 "x".to_string()
@@ -356,19 +528,27 @@ impl RubiksCube {
             CubeMove::FPlus | CubeMove::FMinus | CubeMove::BPlus | CubeMove::BMinus => {             
                 "y".to_string()           
             },
+            _ => "".to_string()
+        };
+        let (findex,seq) = match mv {
+            CubeMove::LPlus | CubeMove::DPlus | CubeMove::RPlus | 
+            CubeMove::UPlus | CubeMove::FPlus | CubeMove::BPlus => (3,vec![0,1,2,3]),
+            CubeMove::LMinus | CubeMove::UMinus  | CubeMove::DMinus | 
+            CubeMove::RMinus | CubeMove::FMinus  | CubeMove::BMinus => (0,vec![3,2,1,0]),
+            _ => (0,vec![])
         };
         let mut slot_map = self.cube_slot_map.borrow_mut();
         //Get corner slots & perform necessary flips: 
         let slot_keys = Self::get_corner_slots(mv.clone());
         let mut last_slot_c: (u32,(u32,u32,u32)) = (0,(0,0,0));
         {
-            let last_slot= slot_map.get(&slot_keys[3]).expect("Failure in getting cube slot");
+            let last_slot= slot_map.get(&slot_keys[findex]).expect("Failure in getting cube slot");
             last_slot_c.0 = last_slot.get_index();
             if let SlottedCubelet::Corner(c, i) = last_slot {
                 last_slot_c.1 = c.get_color_index(&primary);
             }
         }
-        for index in 0..4 {
+        for index in seq.clone() {
             let slot = slot_map.get_mut(&slot_keys[index]).expect("Failure in getting cube slot");
             let mut temp_slot_c: (u32,(u32,u32,u32)) = (0,(0,0,0));
             if let SlottedCubelet::Corner(c, i) = slot {
@@ -383,13 +563,13 @@ impl RubiksCube {
         let slot_keys = Self::get_edge_slots(mv.clone());
         let mut last_slot_c: (u32,(u32,u32)) = (0,(0,0));
         {
-            let last_slot= slot_map.get(&slot_keys[3]).expect("Failure in getting cube slot");
+            let last_slot= slot_map.get(&slot_keys[findex]).expect("Failure in getting cube slot");
             last_slot_c.0 = last_slot.get_index();
             if let SlottedCubelet::Edge(c, i) = last_slot {
                 last_slot_c.1 = c.get_color_index(&primary);
             }
         }
-        for index in 0..4 {
+        for index in seq {
             let slot = slot_map.get_mut(&slot_keys[index]).expect("Failure in getting cube slot");
             let mut temp_slot_c: (u32,(u32,u32)) = (0,(0,0));
             if let SlottedCubelet::Edge(c, i) = slot {
@@ -451,7 +631,8 @@ impl RubiksCube {
                     "down-back".to_string(),
                     "right-back".to_string()
                 ]
-            }
+            },
+            _ => ["".to_string(),"".to_string(),"".to_string(),"".to_string()]
         }
     }
 
@@ -492,7 +673,8 @@ impl RubiksCube {
                 "up-left-back".to_string(),
                 "down-left-back".to_string(),
                 "down-right-back".to_string()]
-            }
+            },
+            _ => ["".to_string(),"".to_string(),"".to_string(),"".to_string()]
         }
     }
 
@@ -516,7 +698,8 @@ impl RubiksCube {
             },
             CubeMove::BPlus | CubeMove::BMinus => {
                 "back".to_string()
-            }
+            },
+            _ => "".to_string()
         };
         for key in self.cube_slot_map.borrow().keys() {
             if key.contains(&target) {
@@ -561,7 +744,6 @@ impl RubiksCube {
         cubelets_map.insert("down-right-back".to_string(),SlottedCubelet::Corner(CornerSlot::DownRightBack(1,0,2), 20));
         
         RubiksCube {
-            body: None,
             cube_slot_map: RefCell::new(cubelets_map),
             cubelets: [
                 Cubelet::Center(FaceColor::Red), //0
@@ -595,23 +777,3 @@ impl RubiksCube {
     }
 }
 
-impl Plugin for RubiksCube {
-    fn process_sim_loop(&mut self,worldbody: Rc<RefCell<Node>>) {
-
-    }
-
-    fn process_model_load(&mut self,worldbody: Rc<RefCell<Node>>) {
-        println!("Processing model load in Rubik's plugin");
-        self.body = Some(worldbody);
-        self.apply_move(CubeMove::FPlus);
-        self.apply_move(CubeMove::BPlus);
-        self.apply_move(CubeMove::UPlus);
-        self.apply_move(CubeMove::RPlus);
-        self.apply_move(CubeMove::DPlus);
-        self.apply_move(CubeMove::LPlus);
-        self.apply_move(CubeMove::RPlus);
-        self.apply_move(CubeMove::RPlus);
-        self.apply_move(CubeMove::DPlus);
-        self.apply_move(CubeMove::FPlus);
-    }
-}
