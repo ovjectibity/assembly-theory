@@ -446,7 +446,7 @@ impl Plugin for RubiksCubeModelInterface {
         let mv = self.solver.generate_move(&self.cube);
         let rcb2 = self.cube.apply_move(mv.clone());
         let mv2 = self.solver.generate_move(&rcb2);
-        // println!("Got the cubemove from policy: {:?}",mv);
+        println!("Got the cubemove from trained policy: {:?} {:?}",mv,mv2);
         self.apply_move(mv,true);
         self.apply_move(mv2,true);
         // self.apply_move(CubeMove::UPlus,true);

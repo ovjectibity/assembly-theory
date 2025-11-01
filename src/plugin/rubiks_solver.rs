@@ -10,6 +10,8 @@ pub struct RubiksSolver {
     policy: nn::Sequential,
     trajectory_depth: u32,
     num_trajectories: u32,
+    num_layers: u32,
+    hidden_layer_dimension: u32,
     pub num_epochs: u32,
     max_complexity: u32,
     store: nn::VarStore,
@@ -28,7 +30,9 @@ impl RubiksSolver {
             num_epochs: 50,
             max_complexity: 10,
             store: pols.1,
-            optim: optim
+            optim: optim,
+            num_layers: 10,
+            hidden_layer_dimension: 30,
         }
     }
 
@@ -37,9 +41,17 @@ impl RubiksSolver {
         let vs_p = vs.root();
         let y = nn::seq().add(nn::linear(vs_p.clone(), 54, 10, Default::default())).
             add_fn(Tensor::relu).
-            add(nn::linear(vs_p.clone(),10,10,Default::default())).
+            add(nn::linear(vs_p.clone(),10,30,Default::default())).
             add_fn(Tensor::relu).
-            add(nn::linear(vs_p.clone(),10,12,Default::default())).
+            add(nn::linear(vs_p.clone(),30,30,Default::default())).
+            add_fn(Tensor::relu).
+            add(nn::linear(vs_p.clone(),30,30,Default::default())).
+            add_fn(Tensor::relu).
+            add(nn::linear(vs_p.clone(),30,30,Default::default())).
+            add_fn(Tensor::relu).
+            add(nn::linear(vs_p.clone(),30,30,Default::default())).
+            add_fn(Tensor::relu).
+            add(nn::linear(vs_p.clone(),30,12,Default::default())).
             add_fn(Tensor::relu).
             add_fn(|xs| {
                 xs.softmax(-1, tch::Kind::Float)
